@@ -615,9 +615,10 @@ DumpAsTreeSequence(const std::string& filename_anc, const std::string& filename_
 			node = (*it_node).label;
       SNPcount = (*it_node).num_events;
 			metasize = snprintf(NULL, 0, "%d", SNPbegin[node]) + snprintf(NULL, 0, "%d", SNPend[node]) + 
-        snprintf(NULL, 0, "%d", int(SNPcount)) + 1;
+        snprintf(NULL, 0, "%d", (int)SNPcount) + 1;
 			meta = (char *) realloc(meta, metasize);
-			sprintf(meta, "%d %d %d", SNPbegin[node], SNPend[node], SNPcount);
+			sprintf(meta, "%d %d %d", SNPbegin[node], SNPend[node], (int)SNPcount);
+      std::cout << metasize << " " << meta << " " << SNPcount << std::endl;//DEBUG
 
 			if(node >= data.N) node += node_const;
 
