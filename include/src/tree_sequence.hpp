@@ -495,6 +495,7 @@ DumpAsTreeSequence(const std::string& filename_anc, const std::string& filename_
 	int prev_branch, next_branch;
 
 	int metasize, size;
+  float SNPcount;
 	char *meta;
 	meta = (char *) malloc(1024);
 	branches = (char *) malloc(1024);
@@ -612,9 +613,11 @@ DumpAsTreeSequence(const std::string& filename_anc, const std::string& filename_
 		//Edge table
 		for(it_node = mtr.tree.nodes.begin(); it_node != std::prev(mtr.tree.nodes.end(),1); it_node++){
 			node = (*it_node).label;
-			metasize = snprintf(NULL, 0,"%d",SNPbegin[node]) + snprintf(NULL, 0,"%d",SNPend[node]) + 1;
+      SNPcount = (*it_node).num_events;
+			metasize = snprintf(NULL, 0, "%d", SNPbegin[node]) + snprintf(NULL, 0, "%d", SNPend[node]) + 
+        snprintf(NULL, 0, "%d", int(SNPcount)) + 1;
 			meta = (char *) realloc(meta, metasize);
-			sprintf(meta, "%d %d", SNPbegin[node], SNPend[node]);
+			sprintf(meta, "%d %d %d", SNPbegin[node], SNPend[node], SNPcount);
 
 			if(node >= data.N) node += node_const;
 
