@@ -614,11 +614,15 @@ DumpAsTreeSequence(const std::string& filename_anc, const std::string& filename_
 		for(it_node = mtr.tree.nodes.begin(); it_node != std::prev(mtr.tree.nodes.end(),1); it_node++){
 			node = (*it_node).label;
       SNPcount = (*it_node).num_events;
-			metasize = snprintf(NULL, 0, "%d", SNPbegin[node]) + snprintf(NULL, 0, "%d", SNPend[node]) + 
-        snprintf(NULL, 0, "%d", (int)SNPcount) + 1;
+			//metasize = snprintf(NULL, 0, "%d", SNPbegin[node]) + snprintf(NULL, 0, "%d", SNPend[node]) + 
+      //  snprintf(NULL, 0, "%.2f", SNPcount) + 2;
+      metasize = 2 * sizeof(int) + sizeof(float);
 			meta = (char *) realloc(meta, metasize);
-			sprintf(meta, "%d %d %d", SNPbegin[node], SNPend[node], (int)SNPcount);
-      std::cout << metasize << " " << meta << " " << SNPcount << std::endl;//DEBUG
+      memcpy(meta, &SNPbegin[node], sizeof(int));
+      memcpy(meta + sizeof(int), &SNPend[node], sizeof(int));
+      memcpy(meta + 2*sizeof(int), &SNPcount, sizeof(float));
+			//sprintf(meta, "%d %d %.2f", SNPbegin[node], SNPend[node], SNPcount);
+
 
 			if(node >= data.N) node += node_const;
 
@@ -676,6 +680,9 @@ DumpAsTreeSequence(const std::string& filename_anc, const std::string& filename_
 
 	std::cerr << "Node count; edge count; tree count" << std::endl;
 	std::cerr << node_count << " " << edge_count << " " << tree_count << std::endl;
+	std::cerr << std::endl << "Storing (edge start, edge end, propagated mutations) in edge metadata," << std::endl;
+	std::cerr << "unpack with:" << std::endl <<
+    "\tedge_meta = numpy.frombuffer(tree_sequence.tables.edges.metadata, 'i4, i4, f4')" << std::endl << std::endl;
 
 
 	//////////////////////////
