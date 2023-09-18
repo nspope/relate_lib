@@ -137,18 +137,25 @@ def node_moment_matching(a_i, b_i, a_j, b_j, y_ij, mu_ij):
     return np.array(proj_i), np.array(proj_j)
 
 
-def date_relate(ts, mu, epoch_start=None, epoch_size=None, num_itt=1):
+def date_relate(ts, mu, epoch_start, epoch_size, num_itt=1, propagate_mutations=True):
     """
     Variational dating of a Relate tree sequence.
     """
 
-    edge_meta = np.frombuffer(ts.tables.edges.metadata, "i4, i4, f4")
-    edge_order = [t.edge(n) for t in ts.trees() for n in t.nodes(order='timeasc')]
+    edge_mutations = np.zeros(ts.num_edges)
+    for m in ts.mutations():
+        if m.edge != tskit.NULL:
+            edge_mutations[m.edge] += 1.0
+
+    if propagate_mutations: # done by Relate
+        edge_meta = np.frombuffer(ts.tables.edges.metadata, "i4, i4, f4")
+    else:
+        edge_meta = [(ts.edges_left[e], ts.edges_right[e], edge_mutations[e]) for e in range(ts.num_edges)]
+    #edge_order = [t.edge(n) for t in ts.trees() for n in t.nodes(order='postorder') if t.edge(n) != tskit.NULL]
+    edge_fwd = [e.id for e in ts.edges()]
+    edge_bwd = [ts.edge(u).id for u in np.lexsort((ts.edges_child, -ts.nodes_time[ts.edges_child]))]
     
     # conditional coalescent prior
-    if epoch_start is None:
-        epoch_start = np.array([0.])
-        epoch_size = np.array([0.5 * ts.diversity() / mu])
     prior = coalescent_prior(ts.num_samples, epoch_start, epoch_size)
     posterior = np.zeros((ts.num_nodes, 2))
     for tree in ts.trees():
@@ -166,7 +173,8 @@ def date_relate(ts, mu, epoch_start=None, epoch_size=None, num_itt=1):
     leafward_message = np.zeros((ts.num_edges, 2))
     rootward_message = np.zeros((ts.num_edges, 2))
     for itt in range(num_itt):
-        for e in edge_order + edge_order[::-1]:
+        #for e in edge_order + edge_order[::-1]:
+        for e in edge_fwd + edge_bwd:
             if e != tskit.NULL:
                 parent, child = ts.edges_parent[e], ts.edges_child[e]
                 left, right, mutations = edge_meta[e] 
@@ -174,6 +182,7 @@ def date_relate(ts, mu, epoch_start=None, epoch_size=None, num_itt=1):
                     edge_likelihood = [mutations, (left - right) * mu]
                     child_cavity = posterior[child] - leafward_message[e]
                     parent_cavity = posterior[parent] - rootward_message[e]
+                    #print(*parent_cavity, *child_cavity, *edge_likelihood) #DEBUG
                     posterior[parent], posterior[child] = \
                         node_moment_matching(*parent_cavity, *child_cavity, *edge_likelihood)
                     leafward_message[e] = posterior[child] - child_cavity
@@ -192,7 +201,11 @@ def date_relate(ts, mu, epoch_start=None, epoch_size=None, num_itt=1):
 from sys import argv
 
 ts = tskit.load(f"{argv[1]}/relate_outputs/chr1.sample1.trees")
+true_ts = tskit.load(f"{argv[1]}/true_chr1.trees") # relatified simulation
+sim_ts = tskit.load(f"{argv[1]}/chr1.trees") # actual ARG
 foo = date_relate(ts, 1.25e-8, np.array([0.]), np.array([20000.]), num_itt=1) #should converge in 1 iteration
+bar = date_relate(true_ts, 1.25e-8, np.array([0.]), np.array([20000.]), num_itt=1, propagate_mutations=False) #should converge in 1 iteration
+#bar = date_relate(sim_ts, 1.25e-8, np.array([0.]), np.array([20000.]), num_itt=5, propagate_mutations=False) #should converge in 1 iteration
 
 # get relate MCMC samples into an array
 sampled_times = np.zeros((ts.num_nodes, 100))
@@ -212,7 +225,7 @@ plt.axline((0,0), slope=1, c="black", linestyle="dashed")
 plt.xlabel("MCMC age (realization)")
 plt.ylabel("Variational E[age]")
 plt.title("Single MCMC sample")
-plt.savefig(f"{argv[1]}/dating_vs_realization.png")
+plt.savefig(f"{argv[1]}/fig/dating_vs_realization.png")
 plt.clf()
 
 plt.hexbin(mean_time[ts.num_samples:], foo[ts.num_samples:,0] / foo[ts.num_samples:,1], gridsize=50, mincnt=1, bins='log')
@@ -220,7 +233,7 @@ plt.xlabel("MCMC age (mean)")
 plt.ylabel("Variational E[age]")
 plt.title("Mean of 100 MCMC samples")
 plt.axline((0,0), slope=1, c="black", linestyle="dashed")
-plt.savefig(f"{argv[1]}/dating_vs_mean.png")
+plt.savefig(f"{argv[1]}/fig/dating_vs_mean.png")
 plt.clf()
 
 plt.hexbin(std_time[ts.num_samples:], np.sqrt(foo[ts.num_samples:,0] / foo[ts.num_samples:,1] ** 2), gridsize=50, mincnt=1, bins='log')
@@ -228,7 +241,7 @@ plt.xlabel("MCMC age (stddev)")
 plt.ylabel("Variational sqrt(V[age])")
 plt.title("StdDev of 100 MCMC samples")
 plt.axline((0,0), slope=1, c="black", linestyle="dashed")
-plt.savefig(f"{argv[1]}/dating_vs_stddev.png")
+plt.savefig(f"{argv[1]}/fig/dating_vs_stddev.png")
 plt.clf()
 
 plt.hexbin(np.log(ts.tables.nodes.time[ts.num_samples:]), scipy.special.digamma(foo[ts.num_samples:,0]) - np.log(foo[ts.num_samples:,1]), gridsize=50, mincnt=1, bins='log')
@@ -236,7 +249,7 @@ plt.axline((0,0), slope=1, c="black", linestyle="dashed")
 plt.xlabel("MCMC log age (realization)")
 plt.ylabel("Variational E[log age]")
 plt.title("Single MCMC sample, log'd")
-plt.savefig(f"{argv[1]}/dating_vs_realization_log.png")
+plt.savefig(f"{argv[1]}/fig/dating_vs_realization_log.png")
 plt.clf()
 
 plt.hexbin(mean_log_time[ts.num_samples:], scipy.special.digamma(foo[ts.num_samples:,0]) - np.log(foo[ts.num_samples:,1]), gridsize=50, mincnt=1, bins='log')
@@ -244,22 +257,30 @@ plt.xlabel("MCMC log age (mean)")
 plt.ylabel("Variational E[log age]")
 plt.title("Mean log of 100 MCMC samples")
 plt.axline((0,0), slope=1, c="black", linestyle="dashed")
-plt.savefig(f"{argv[1]}/dating_vs_mean_log.png")
+plt.savefig(f"{argv[1]}/fig/dating_vs_mean_log.png")
 plt.clf()
 
 # ------- compare global summary statistics
 
 # expected sufficient statistics vs number of descendants
-true_ts = tskit.load(f"{argv[1]}/chr1.trees")
-true_age_by_numdesc = np.zeros(ts.num_samples + 1) #from true ts
-true_log_age_by_numdesc = np.zeros(ts.num_samples + 1) #from true ts
+#sim_ts = true_ts
+
+#for simulation
+sim_age_by_numdesc = np.zeros(ts.num_samples + 1) #from sim ts
+true_age_by_numdesc = np.zeros(ts.num_samples + 1) #from sim ts
+sim_log_age_by_numdesc = np.zeros(ts.num_samples + 1) #from sim ts
+true_log_age_by_numdesc = np.zeros(ts.num_samples + 1) #from sim ts
 true_span_by_numdesc = np.zeros(ts.num_samples + 1)
-for tree in true_ts.trees():
+for tree in sim_ts.trees():
     for node in tree.nodes():
         k = tree.num_samples(node)
-        true_age_by_numdesc[k] += true_ts.nodes_time[node] * tree.span
-        true_log_age_by_numdesc[k] += np.log(true_ts.nodes_time[node]) * tree.span
+        sim_age_by_numdesc[k] += sim_ts.nodes_time[node] * tree.span
+        sim_log_age_by_numdesc[k] += np.log(sim_ts.nodes_time[node]) * tree.span
+        true_log_age_by_numdesc[k] += (scipy.special.digamma(bar[node, 0]) - np.log(bar[node, 1])) * tree.span
+        true_age_by_numdesc[k] += bar[node, 0] / bar[node, 1] * tree.span
         true_span_by_numdesc[k] += tree.span
+sim_age_by_numdesc /= true_span_by_numdesc
+sim_log_age_by_numdesc /= true_span_by_numdesc
 true_age_by_numdesc /= true_span_by_numdesc
 true_log_age_by_numdesc /= true_span_by_numdesc
 
@@ -281,25 +302,36 @@ vari_age_by_numdesc /= span_by_numdesc
 mcmc_log_age_by_numdesc /= span_by_numdesc
 vari_log_age_by_numdesc /= span_by_numdesc
 
-prior = coalescent_prior(true_ts.num_samples, np.array([0.]), np.array([20000.]))
-plt.scatter(np.arange(0, ts.num_samples + 1), true_log_age_by_numdesc, s=1, c="black", label='sim')
+prior = coalescent_prior(sim_ts.num_samples, np.array([0.]), np.array([20000.]))
+plt.scatter(np.arange(0, ts.num_samples + 1), sim_log_age_by_numdesc, s=1, c="black", label='sim')
 plt.scatter(np.arange(0, ts.num_samples + 1), mcmc_log_age_by_numdesc, s=1, c="red", label='mcmc')
 plt.scatter(np.arange(0, ts.num_samples + 1), vari_log_age_by_numdesc, s=1, c="blue", label='vari')
 plt.scatter(np.arange(0, ts.num_samples + 1), scipy.special.digamma(prior[:,0] + 1) - np.log(-prior[:,1]), s=1, c="green", label='prior')
 plt.xlabel("Number of descendants")
 plt.ylabel("Expected log age")
 plt.legend(loc='upper left')
-plt.savefig(f"{argv[1]}/marginal_log_age.png")
+plt.savefig(f"{argv[1]}/fig/marginal_log_age.png")
 plt.clf()
 
-plt.scatter(np.arange(0, ts.num_samples + 1), true_age_by_numdesc, s=1, c="black", label='sim')
+plt.scatter(np.arange(0, ts.num_samples + 1), sim_age_by_numdesc, s=1, c="black", label='sim')
 plt.scatter(np.arange(0, ts.num_samples + 1), mcmc_age_by_numdesc, s=1, c="red", label='mcmc')
 plt.scatter(np.arange(0, ts.num_samples + 1), vari_age_by_numdesc, s=1, c="blue", label='vari')
 plt.scatter(np.arange(0, ts.num_samples + 1), (prior[:,0] + 1)/(-prior[:,1]), s=1, c="green", label='prior')
 plt.xlabel("Number of descendants")
 plt.ylabel("Expected age")
 plt.legend(loc='upper left')
-plt.savefig(f"{argv[1]}/marginal_age.png")
+plt.savefig(f"{argv[1]}/fig/marginal_age.png")
+plt.clf()
+
+# w/ true topologies
+plt.scatter(np.arange(0, ts.num_samples + 1), sim_age_by_numdesc, s=1, c="black", label='sim')
+plt.scatter(np.arange(0, ts.num_samples + 1), true_age_by_numdesc, s=1, c="red", label='vari-true')
+plt.scatter(np.arange(0, ts.num_samples + 1), vari_age_by_numdesc, s=1, c="blue", label='vari-infr')
+plt.scatter(np.arange(0, ts.num_samples + 1), (prior[:,0] + 1)/(-prior[:,1]), s=1, c="green", label='prior')
+plt.xlabel("Number of descendants")
+plt.ylabel("Expected age")
+plt.legend(loc='upper left')
+plt.savefig(f"{argv[1]}/marginal_age_true_topology.png")
 plt.clf()
 
 # coalescence rates

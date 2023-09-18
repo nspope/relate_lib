@@ -122,3 +122,11 @@ $RELATE_DIR/scripts/SampleBranchLengths/SampleBranchLengths.sh \
 $RELATE_LIB/bin/Convert --mode ConvertToTreeSequence \
   --anc $OUT_DIR/$ID.sample${i}.anc --mut $OUT_DIR/$ID.sample${i}.mut -o $OUT_DIR/$ID.sample${i}
 done
+
+# convert true tree sequence to relate format (e.g. propagate mutations via true shared edges)
+$RELATE_LIB/bin/Convert --mode ConvertFromTreeSequence \
+  -i sim_1024/$ID.trees --anc sim_1024/true_$ID.anc --mut sim_1024/true_$ID.mut
+
+# convert true tree sequence from relate format (e.g. putting propagated mutations in metadata, breaking into marginal trees)
+$RELATE_LIB/bin/Convert --mode ConvertToTreeSequence \
+  --anc sim_1024/true_$ID.anc --mut sim_1024/true_$ID.mut -o sim_1024/true_$ID
