@@ -1,15 +1,15 @@
 """
 Python mockup of variational dating for Relate trees
 
-Dumps lists containing a dict for each marginal tree, with posterior summaryu
-for 
+Instead of matching moments of sufficient statistics, use mean and variance
+(less to reimplement, works nearly as well)
 """
 
 import tsdate
 import numpy as np
 import tskit
 import scipy.special
-from scipy.special import gammainc, gammaln, betaln, hyp2f1, digamma
+from scipy.special import gammainc, gammaln, betaln, hyp2f1
 
 # --- lib --- #
 
@@ -238,166 +238,96 @@ def date_relate(ts, mu, epoch_start, epoch_size, propagate_mutations=True, num_i
                     *edge_likelihood, is_a_leaf
                 )
 
-        # convert from natural parameterization to sufficient statistics
+        # convert from natural parameterization
         for node in tree.nodes():
-            alpha, beta = nodes.pop(node)
-            num_desc = tree.num_samples(node)
             if node >= ts.num_samples:
-                nodes[node] = ((alpha + 1)/-beta, digamma(alpha + 1) - np.log(-beta), num_desc, tree.span)
+                alpha, beta = nodes.pop(node)
+                nodes[node] = (alpha + 1, -beta)
         node_posterior.append(nodes)
 
         for mut in tree.mutations():
             alpha, beta = edges[mut.edge]
             position = ts.sites_position[mut.site]
-            num_desc = tree.num_samples(mut.node)
-            muts[position] = ((alpha + 1)/-beta, digamma(alpha + 1) - np.log(-beta), num_desc)
+            muts[position] = (alpha + 1, -beta)
         muts_posterior.append(muts)
 
-    node_prior[:2] = [0.0, -np.inf]
-    for num_desc in range(2, ts.num_samples + 1):
-        alpha, beta = node_prior[num_desc]
-        node_prior[num_desc] = [(alpha + 1)/-beta, digamma(alpha + 1) - np.log(-beta)]
-
-    # format per node/mutation: (expected_time, expected_logtime, number_of_descendant_samples)
-    return {"nodes":node_posterior, "mutations":muts_posterior, "prior":node_prior}
+    return {"nodes":node_posterior, "mutations":muts_posterior}
 
 
-# --- fit variational model, make list of dicts with nodes/mutations per marginal tree --- #
+# --- fit variational model --- #
 
 import os
 from sys import argv
 import pickle
-import glob
 
 if not os.path.exists(f"{argv[1]}/dated"):
     os.makedirs(f"{argv[1]}/dated")
 
-Ne = 20000.
+if True:
+    # compare against tsdate's more general version of algorithm
+    true_ts = tskit.load(f"{argv[1]}/true_chr1.trees")
+    true_ts_nometa = true_ts.dump_tables()
+    true_ts_nometa.edges.packset_metadata([b''] * true_ts_nometa.edges.num_rows)
+    true_ts_nometa.delete_intervals([[[x for x in true_ts.breakpoints()][100], true_ts.sequence_length]])
+    true_ts_nometa.trim()
+    true_ts_nometa = true_ts_nometa.tree_sequence()
+    
+    bar = date_relate(true_ts_nometa, 1.25e-8, np.array([0.]), np.array([20000.]), num_itt=1, propagate_mutations=False)
+    
+    prior = coalescent_prior(true_ts_nometa.num_samples, np.array([0.]), np.array([20000.]))
+    grid = tsdate.prior.MixturePrior(true_ts_nometa, prior_distribution="gamma").make_parameter_grid(population_size=10000.)
+    for tree in true_ts_nometa.trees():
+        for node in tree.nodes():
+            if node >= true_ts_nometa.num_samples:
+                alpha, beta = prior[tree.num_samples(node)]
+                grid[node] = [alpha + 1, -beta]
+    
+    _, baz = tsdate.date(
+        true_ts_nometa, mutation_rate=1.25e-8, priors=grid, global_prior=False, 
+        method="variational_gamma", max_iterations=1, return_posteriors=True, progress=True
+    )
+    pickle.dump({"relate":bar, "tsdate":{"nodes":baz, "mutations":tsdate.core.foo}, "ts":true_ts_nometa}, open("var_date_test.pickle", "wb"))
+    assert False
 
 # relate-inferred tree sequence
 rela_ts = tskit.load(f"{argv[1]}/relate_outputs/chr1.sample1.trees")
 rela_local = date_relate(
-    rela_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=False, num_itt=1
+    rela_ts, 1.25e-8, np.array([0.]), np.array([20000.]), propagate_mutations=False
 )
 rela_prop = date_relate(
-    rela_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=True, num_itt=1
+    rela_ts, 1.25e-8, np.array([0.]), np.array([20000.]), propagate_mutations=True
 )
-pickle.dump(rela_local, open(f"{argv[1]}/dated/chr1.dated.local.pickle", "wb"))
-pickle.dump(rela_prop, open(f"{argv[1]}/dated/chr1.dated.propagated.pickle", "wb"))
+pickle.dump(rela_local, open("{argv[1]}/dated/chr1.dated.local.pickle", "wb"))
+pickle.dump(rela_prop, open("{argv[1]}/dated/chr1.dated.propagated.pickle", "wb"))
+
+# simulated ARG (multi-tree nodes)
+#simu_ts = tskit.load(f"{argv[1]}/chr1.trees")
 
 # relatified simulation (propagate mutations according to true edges)
-true_ts = tskit.load(f"{argv[1]}/relate_outputs/true_chr1.sample1.trees")
+true_ts = tskit.load(f"{argv[1]}/true_chr1.trees")
 true_local = date_relate(
-    true_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=False, num_itt=1
+    true_ts, 1.25e-8, np.array([0.]), np.array([20000.]), propagate_mutations=False
 )
 true_prop = date_relate(
-    true_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=True, num_itt=1
+    true_ts, 1.25e-8, np.array([0.]), np.array([20000.]), propagate_mutations=True
 )
-pickle.dump(true_local, open(f"{argv[1]}/dated/true_chr1.dated.local.pickle", "wb"))
-pickle.dump(true_prop, open(f"{argv[1]}/dated/true_chr1.dated.propagated.pickle", "wb"))
-
-true_ts_nometa = true_ts.dump_tables()
-true_ts_nometa.edges.packset_metadata([b''] * true_ts_nometa.edges.num_rows)
-#true_ts_nometa.delete_intervals([[[x for x in true_ts.breakpoints()][100], true_ts.sequence_length]])
-#true_ts_nometa.trim()
-true_ts_nometa = true_ts_nometa.tree_sequence()
-
-prior = coalescent_prior(true_ts_nometa.num_samples, np.array([0.]), np.array([20000.]))
-grid = tsdate.prior.MixturePrior(true_ts_nometa, prior_distribution="gamma").make_parameter_grid(population_size=10000.)
-for tree in true_ts_nometa.trees():
-    for node in tree.nodes():
-        if node >= true_ts_nometa.num_samples:
-            alpha, beta = prior[tree.num_samples(node)]
-            grid[node] = [alpha + 1, -beta]
-blah, baz = tsdate.date(
-    true_ts_nometa, mutation_rate=1.25e-8, 
-    population_size=1e4, global_prior=True,
-    #priors=grid, global_prior=False, 
-    method="variational_gamma", max_iterations=1, return_posteriors=True, progress=True
-)
-
-# --- aggregate relate MCMC output into the same per-tree format --- #
-
-def aggregate_mcmc(ts, samples):
-    node_times = np.full((ts.num_nodes, len(samples)), np.nan)
-    mutation_times = np.full((ts.num_mutations, len(samples)), np.nan)
-
-    above_mut = np.array([ts.edges_parent[mut.edge] for mut in ts.mutations()])
-    below_mut = np.array([ts.edges_child[mut.edge] for mut in ts.mutations()])
-    unmapped = np.array([mut.edge == tskit.NULL for mut in ts.mutations()])
-
-    for i in range(1, len(samples) + 1):
-        node_times[:, i-1] = tskit.load(f"{samples[i-1]}").nodes_time
-        mutation_times[:, i-1] = node_times[above_mut, i-1] / 2 + node_times[below_mut, i-1] / 2
-    mutation_times[unmapped, :] = np.nan
-
-    node_logtimes = np.mean(np.log(node_times), axis=1)
-    mutation_logtimes = np.mean(np.log(mutation_times), axis=1)
-    node_times = np.mean(node_times, axis=1)
-    mutation_times = np.mean(mutation_times, axis=1)
-
-    node_posterior = []
-    muts_posterior = []
-    for tree in ts.trees():
-        nodes = {}
-        muts = {}
-        for node in tree.nodes():
-            num_desc = tree.num_samples(node)
-            nodes[node] = (node_times[node], node_logtimes[node], num_desc, tree.span)
-        node_posterior.append(nodes)
-        for mut in tree.mutations():
-            pos = ts.sites_position[mut.site]
-            num_desc = tree.num_samples(mut.node)
-            muts[pos] = (mutation_times[mut.id], mutation_logtimes[mut.id], num_desc)
-        muts_posterior.append(muts)
-
-    # format per node/mutation: (expected_time, expected_logtime, number_of_descendant_samples)
-    return {"nodes":node_posterior, "mutations":muts_posterior}
-
-
-rela_mcmc = aggregate_mcmc(rela_ts, glob.glob(f"{argv[1]}/relate_outputs/chr1.sample*trees"))
-true_mcmc = aggregate_mcmc(true_ts, glob.glob(f"{argv[1]}/relate_outputs/true_chr1.sample*trees"))
-pickle.dump(rela_mcmc, open(f"{argv[1]}/dated/chr1.mcmc.propagated.pickle", "wb"))
-pickle.dump(true_mcmc, open(f"{argv[1]}/dated/true_chr1.mcmc.propagated.pickle", "wb"))
-
-
-# --- aggregate true ages (e.g. from simulation) into same format --- #
-
-def aggregate_truth(ts):
-    node_times = np.full(ts.num_nodes, np.nan)
-    mutation_times = np.full(ts.num_mutations, np.nan)
-
-    above_mut = np.array([ts.edges_parent[mut.edge] for mut in ts.mutations()])
-    below_mut = np.array([ts.edges_child[mut.edge] for mut in ts.mutations()])
-    unmapped = np.array([mut.edge == tskit.NULL for mut in ts.mutations()])
-
-    node_truth = []
-    muts_truth = []
-    for tree in ts.trees():
-        nodes = {}
-        muts = {}
-        for node in tree.nodes():
-            num_desc = tree.num_samples(node)
-            nodes[node] = (ts.nodes_time[node], np.log(ts.nodes_time[node]), num_desc, tree.span)
-        for mut in tree.mutations():
-            pos = ts.sites_position[mut.site]
-            num_desc = tree.num_samples(mut.node)
-            muts[pos] = (mut.time, np.log(mut.time), num_desc)
-        node_truth.append(nodes)
-        muts_truth.append(muts)
-
-    # format per node/mutation: (true_time, true_logtime, number_of_descendant_samples)
-    return {"nodes":node_truth, "mutations":muts_truth}
-
-
-simul_ts = tskit.load(f"{argv[1]}/chr1.trees")
-simul_truth = aggregate_truth(simul_ts)
-pickle.dump(simul_truth, open(f"{argv[1]}/dated/chr1.simul.pickle", "wb"))
-blah_blah = aggregate_truth(blah)
-pickle.dump(blah_blah, open(f"{argv[1]}/dated/blah_blah.pickle", "wb"))
+pickle.dump(true_local, open("{argv[1]}/dated/true_chr1.dated.local.pickle", "wb"))
+pickle.dump(true_prop, open("{argv[1]}/dated/true_chr1.dated.propagated.pickle", "wb"))
 
 assert False
 
+#-------------------------------------------------------
+foo = date_relate(ts, 1.25e-8, np.array([0.]), np.array([20000.]), num_itt=1) #should converge in 1 iteration
+
+#bar = date_relate(sim_ts, 1.25e-8, np.array([0.]), np.array([20000.]), num_itt=5, propagate_mutations=False) #should converge in 1 iteration
+
+# get relate MCMC samples into an array
+sampled_times = np.zeros((ts.num_nodes, 100))
+for i in range(1, 101):
+    sampled_times[:,i-1] = tskit.load(f"{argv[1]}/relate_outputs/chr1.sample{i}.trees").nodes_time
+mean_time = np.mean(sampled_times, axis=1)
+mean_log_time = np.mean(np.log(sampled_times), axis=1)
+std_time = np.std(sampled_times, axis=1)
 
 # ------- figures
 

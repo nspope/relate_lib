@@ -1,0 +1,4 @@
+numpy
+tskit
+scipy
+tsdate @ git+https://github.com/nspope/tsdate@mutation-age-distr
