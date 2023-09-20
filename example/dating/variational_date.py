@@ -276,32 +276,32 @@ Ne = 20000.
 
 # relate-inferred tree sequence
 rela_ts = tskit.load(f"{argv[1]}/relate_outputs/chr1.sample1.trees")
-rela_local = date_relate(
-    rela_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=False, num_itt=1
-)
-rela_prop = date_relate(
-    rela_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=True, num_itt=1
-)
-pickle.dump(rela_local, open(f"{argv[1]}/dated/chr1.dated.local.pickle", "wb"))
-pickle.dump(rela_prop, open(f"{argv[1]}/dated/chr1.dated.propagated.pickle", "wb"))
+#rela_local = date_relate(
+#    rela_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=False, num_itt=1
+#)
+#rela_prop = date_relate(
+#    rela_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=True, num_itt=1
+#)
+#pickle.dump(rela_local, open(f"{argv[1]}/dated/chr1.dated.local.pickle", "wb"))
+#pickle.dump(rela_prop, open(f"{argv[1]}/dated/chr1.dated.propagated.pickle", "wb"))
 
 # relatified simulation (propagate mutations according to true edges)
 true_ts = tskit.load(f"{argv[1]}/relate_outputs/true_chr1.sample1.trees")
-true_local = date_relate(
-    true_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=False, num_itt=1
-)
-true_prop = date_relate(
-    true_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=True, num_itt=1
-)
-pickle.dump(true_local, open(f"{argv[1]}/dated/true_chr1.dated.local.pickle", "wb"))
-pickle.dump(true_prop, open(f"{argv[1]}/dated/true_chr1.dated.propagated.pickle", "wb"))
+#true_local = date_relate(
+#    true_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=False, num_itt=1
+#)
+#true_prop = date_relate(
+#    true_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=True, num_itt=1
+#)
+#pickle.dump(true_local, open(f"{argv[1]}/dated/true_chr1.dated.local.pickle", "wb"))
+#pickle.dump(true_prop, open(f"{argv[1]}/dated/true_chr1.dated.propagated.pickle", "wb"))
 
+# compare against tsdate implementation of algo
 true_ts_nometa = true_ts.dump_tables()
 true_ts_nometa.edges.packset_metadata([b''] * true_ts_nometa.edges.num_rows)
 #true_ts_nometa.delete_intervals([[[x for x in true_ts.breakpoints()][100], true_ts.sequence_length]])
 #true_ts_nometa.trim()
 true_ts_nometa = true_ts_nometa.tree_sequence()
-
 prior = coalescent_prior(true_ts_nometa.num_samples, np.array([0.]), np.array([20000.]))
 grid = tsdate.prior.MixturePrior(true_ts_nometa, prior_distribution="gamma").make_parameter_grid(population_size=10000.)
 for tree in true_ts_nometa.trees():
@@ -311,10 +311,14 @@ for tree in true_ts_nometa.trees():
             grid[node] = [alpha + 1, -beta]
 blah, baz = tsdate.date(
     true_ts_nometa, mutation_rate=1.25e-8, 
-    population_size=1e4, global_prior=True,
-    #priors=grid, global_prior=False, 
+    #population_size=1e4, global_prior=True,
+    priors=grid, global_prior=False, 
     method="variational_gamma", max_iterations=1, return_posteriors=True, progress=True
 )
+
+# compare against FULL tsdate implementation
+simul_ts = tskit.load(f"{argv[1]}/chr1.trees")
+blarg = tsdate.date(simul_ts, population_size=10000., mutation_rate=1.25e-8, method="variational_gamma", max_iterations=10, progress=True)
 
 # --- aggregate relate MCMC output into the same per-tree format --- #
 
@@ -393,8 +397,12 @@ def aggregate_truth(ts):
 simul_ts = tskit.load(f"{argv[1]}/chr1.trees")
 simul_truth = aggregate_truth(simul_ts)
 pickle.dump(simul_truth, open(f"{argv[1]}/dated/chr1.simul.pickle", "wb"))
+
 blah_blah = aggregate_truth(blah)
 pickle.dump(blah_blah, open(f"{argv[1]}/dated/blah_blah.pickle", "wb"))
+
+blarg_blarg = aggregate_truth(blarg)
+pickle.dump(blarg_blarg, open(f"{argv[1]}/dated/blarg_blarg.pickle", "wb"))
 
 assert False
 

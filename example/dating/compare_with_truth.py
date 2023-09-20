@@ -39,14 +39,17 @@ def plot_mutation_ages(truth, inferred, title, xlabel, ylabel, outfile, offset=0
     fig.clf()
 
 
-def plot_node_age_by_frequency(list_of_ages, title, xlabel, ylabel, outfile, fit):
+def plot_node_age_by_frequency(list_of_ages, title, xlabel, ylabel, outfile, colorkey, fit):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
     fig.suptitle(title)
 
     num_samples = np.max([x[2] for t in list_of_ages[0] for x in t.values()])
 
-    labels = ['sim', 'mcmc', 'vari'] #TODO make argument (dict)
-    cols = ['black', 'red', 'blue', 'green'] #TODO make argument (dict)
+    labels = []
+    colors = []
+    for (lab, col) in colorkey:
+        labels.append(lab)
+        colors.append(col)
 
     for i, post in enumerate(list_of_ages):
         time_by_freq = np.zeros(num_samples + 1)
@@ -57,11 +60,11 @@ def plot_node_age_by_frequency(list_of_ages, title, xlabel, ylabel, outfile, fit
                 time_by_freq[freq] += span * time
                 logtime_by_freq[freq] += span * logtime
                 total_span[freq] += span
-        ax1.scatter(np.arange(num_samples + 1), time_by_freq / total_span, c=cols[i], label=labels[i], s=2)
-        ax2.scatter(np.arange(num_samples + 1), logtime_by_freq / total_span, c=cols[i], label=labels[i], s=2)
+        ax1.scatter(np.arange(num_samples + 1), time_by_freq / total_span, c=colors[i], label=labels[i], s=2)
+        ax2.scatter(np.arange(num_samples + 1), logtime_by_freq / total_span, c=colors[i], label=labels[i], s=2)
 
-    ax1.scatter(np.arange(num_samples + 1), fit[:, 0], s=2, c="purple", label='prior')
-    ax2.scatter(np.arange(num_samples + 1), fit[:, 1], s=2, c="purple", label='prior')
+    ax1.scatter(np.arange(num_samples + 1), fit[:, 0], s=3, c="black", label='theory')
+    ax2.scatter(np.arange(num_samples + 1), fit[:, 1], s=3, c="black", label='theory')
     ax1.legend(loc='upper left')
     ax1.set_xlabel(f"{xlabel[0]}")
     ax1.set_ylabel(f"{ylabel[0]}")
@@ -84,6 +87,7 @@ if not os.path.exists(f"{argv[1]}/fig"):
 
 simul_truth = pickle.load(open(f"{argv[1]}/dated/chr1.simul.pickle", "rb"))
 blah_blah = pickle.load(open(f"{argv[1]}/dated/blah_blah.pickle", "rb"))
+blarg_blarg = pickle.load(open(f"{argv[1]}/dated/blarg_blarg.pickle", "rb"))
 
 # --- propagated mutations, true topologies --- #
 
@@ -91,17 +95,39 @@ true_mcmc_prop = pickle.load(open(f"{argv[1]}/dated/true_chr1.mcmc.propagated.pi
 true_vari_prop = pickle.load(open(f"{argv[1]}/dated/true_chr1.dated.propagated.pickle", "rb"))
 true_vari_local = pickle.load(open(f"{argv[1]}/dated/true_chr1.dated.local.pickle", "rb"))
 
+# node age by frequency
 plot_node_age_by_frequency(
     [simul_truth['nodes'], true_mcmc_prop['nodes'], true_vari_prop['nodes']], 
-    'foobar', ['foo', 'bar'], ['foo', 'bar'],
+    'Average age by frequency\n(true topologies)', 
+    ['Number of descendant tips', 'Number of descendant tips'], ['E[age]', 'E[log age]'],
     f"{argv[1]}/fig/node_age_by_freq.true_chr1.propagated.png", 
+    colorkey=[("simulation", "blue"), ("mcmc-relate", "red"), ("ep-relate", "green")],
     fit=true_vari_local['prior'],
 )
+
 plot_node_age_by_frequency(
     [simul_truth['nodes'], true_mcmc_prop['nodes'], blah_blah['nodes']],
-    'foobar', ['foo', 'bar'], ['foo', 'bar'],
-    f"{argv[1]}/fig/blah_blah.png", 
+    'Average age by frequency\n(true topologies)', 
+    ['Number of descendant tips', 'Number of descendant tips'], ['E[age]', 'E[log age]'],
+    f"{argv[1]}/fig/node_age_by_freq.true_chr1.local.png", 
+    colorkey=[("simulation", "blue"), ("mcmc-relate", "red"), ("ep-marginal", "green")],
     fit=true_vari_local['prior'],
+)
+
+plot_node_age_by_frequency(
+    [simul_truth['nodes'], true_mcmc_prop['nodes'], blarg_blarg['nodes']],
+    'Average age by frequency\n(true topologies)', 
+    ['Number of descendant tips', 'Number of descendant tips'], ['E[age]', 'E[log age]'],
+    f"{argv[1]}/fig/node_age_by_freq.true_chr1.tsdate.png", 
+    colorkey=[("simulation", "blue"), ("mcmc-relate", "red"), ("ep-tsdate", "green")],
+    fit=true_vari_local['prior'],
+)
+
+# single mutation ages, methods vs one another
+plot_mutation_ages(
+    simul_truth['mutations'], blarg_blarg['mutations'], "Variational vs true mutation ages\n(true topologies, tsdate)", 
+    ["True mutation age", "True log mutation age"], ["Variational E[mutation age]", "Variational E[log mutation age]"], 
+    f"{argv[1]}/fig/single_mutations.true_chr1.dated.tsdate.png",
 )
 
 plot_mutation_ages(
@@ -111,15 +137,21 @@ plot_mutation_ages(
 )
 
 plot_mutation_ages(
-    simul_truth['mutations'], true_mcmc_prop['mutations'], "MCMC vs true mutation ages\n(true topologies, propagated mutations, 100 MCMC samples)", 
+    simul_truth['mutations'], true_mcmc_prop['mutations'], "MCMC vs true mutation ages\n(true topologies, 100 MCMC samples)", 
     ["True mutation age", "True log mutation age"], ["MCMC E[mutation age]", "MCMC E[log mutation age]"], 
     f"{argv[1]}/fig/single_mutations.true_chr1.mcmc.propagated.png",
 )
 
 plot_mutation_ages(
-    true_mcmc_prop['mutations'], true_vari_prop['mutations'], "Variational vs MCMC mutation ages\n(true topologies, propagated mutations, 100 MCMC samples)", 
+    true_mcmc_prop['mutations'], true_vari_prop['mutations'], "Variational vs MCMC mutation ages\n(true topologies, propagated mutations v. 100 MCMC samples)", 
     ["MCMC E[mutation age]", "MCMC E[log mutation age]"], ["Variational E[mutation age]", "Variational E[log mutation age]"], 
     f"{argv[1]}/fig/single_mutations.true_chr1.mcmc_dated.propagated.png",
+)
+
+plot_mutation_ages(
+    blarg_blarg['mutations'], true_mcmc_prop['mutations'], "Variational vs MCMC mutation ages\n(true topologies, tsdate v. 100 MCMC samples)", 
+    ["Variational E[mutation age]", "Variational E[log mutation age]"], ["MCMC E[mutation age]", "MCMC E[log mutation age]"], 
+    f"{argv[1]}/fig/single_mutations.true_chr1.mcmc_dated.tsdate.png",
 )
 
 # --- propagated mutations, inferred topologies --- #
