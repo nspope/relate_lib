@@ -9,8 +9,10 @@ NE="20000" #haploid
 MU="1.25e-8"
 SEED="1024"
 ID="chr1"
-SEQLEN=1000000
+SEQLEN=10000000
 SAMPLES=100 #haploid
+MCMC_DRAWS=100
+NUM_THREADS=12
 
 WORK_DIR=`pwd`/sim_$SEED
 IN_DIR=$WORK_DIR/relate_inputs
@@ -19,9 +21,11 @@ mkdir -p $WORK_DIR
 mkdir -p $IN_DIR
 mkdir -p $OUT_DIR
 
+
 # --- SIMULATE DATA --- #
 
 cd $WORK_DIR
+echo "NE:$NE MU:$MU SEED:$SEED ID:$ID SEQLEN:$SEQLEN SAMPLES:$SAMPLES" >$ID.info
 printf '
 import msprime
 ne = %s
@@ -49,6 +53,7 @@ ts.write_vcf(
   position_transform=lambda p: [x-1 for x in p],
 )
 ' $NE $MU $SEED $ID $SEQLEN $SAMPLES | python3 && gzip -f $ID.vcf
+
 
 # --- INFER TREES VIA RELATE --- #
 
@@ -97,6 +102,7 @@ $RELATE_DIR/bin/Relate --mode All -m $MU -N $NE \
   --haps $ID.haps.gz --sample $ID.sample.gz --annot $ID.annot \
   --dist $ID.dist.gz --map $ID.hapmap -o $ID
 
+
 # --- ESTIMATE BRANCH LENGTHS USING MCMC --- #
 
 cd $WORK_DIR
@@ -108,24 +114,25 @@ $RELATE_DIR/scripts/EstimatePopulationSize/EstimatePopulationSize.sh \
   --threshold 0.5 \
   --years_per_gen 1 \
   --num_iter 1 \
-  --threads 4
+  --threads $NUM_THREADS
 
 # hacky known coalescent rate
 awk -vne=$NE 'NR!=3{print};NR==3{for(i=3;i<=NF;++i) $i=1/ne; print}' $OUT_DIR/$ID.coal >$OUT_DIR/$ID.equil.coal
 
-for i in {1..100}; do
+echo "
+i=\$1
 $RELATE_DIR/scripts/SampleBranchLengths/SampleBranchLengths.sh \
   -i $OUT_DIR/$ID \
-  -o $OUT_DIR/${ID}.sample${i} \
+  -o $OUT_DIR/${ID}.sample\${i} \
   -m $MU \
   --coal $OUT_DIR/$ID.equil.coal \
-  --seed $((SEED + i)) \
-  --num_samples 1
-
-# convert to tree sequence with edges linked across trees
+  --seed \$(($SEED + i)) \
+  --num_samples 1 
 $RELATE_LIB/bin/Convert --mode ConvertToTreeSequence \
-  --anc $OUT_DIR/$ID.sample${i}.anc --mut $OUT_DIR/$ID.sample${i}.mut -o $OUT_DIR/$ID.sample${i}
-done
+  --anc $OUT_DIR/$ID.sample\${i}.anc --mut $OUT_DIR/$ID.sample\${i}.mut -o $OUT_DIR/$ID.sample\${i} 
+" >sample_inferred.sh
+seq ${MCMC_DRAWS} | xargs -t -I % -P ${NUM_THREADS} bash -c 'bash sample_inferred.sh % &>/dev/null'
+
 
 # --- COMPARE AGAINST TRUTH --- #
 
@@ -133,19 +140,19 @@ cd $WORK_DIR
 
 # convert true tree sequence to relate format (e.g. propagate mutations via true shared edges)
 $RELATE_LIB/bin/Convert --mode ConvertFromTreeSequence \
-  -i $WORK_DIR/$ID.trees --anc $WORK_DIR/true_$ID.anc --mut $WORK_DIR/true_$ID.mut
+  -i $WORK_DIR/$ID.trees --anc $OUT_DIR/true_$ID.anc --mut $OUT_DIR/true_$ID.mut
 
 # re-date, using true topologies
-for i in {1..100}; do
+echo "
+i=\$1
 $RELATE_DIR/scripts/SampleBranchLengths/SampleBranchLengths.sh \
-  -i $WORK_DIR/true_$ID \
-  -o $OUT_DIR/true_${ID}.sample${i} \
+  -i $OUT_DIR/true_$ID \
+  -o $OUT_DIR/true_$ID.sample\${i} \
   -m $MU \
   --coal $OUT_DIR/$ID.equil.coal \
-  --seed $((SEED + i)) \
-  --num_samples 1
-
-# convert true tree sequence from relate format (e.g. putting propagated mutations in metadata, breaking into marginal trees)
+  --seed \$(($SEED + i)) \
+  --num_samples 1 
 $RELATE_LIB/bin/Convert --mode ConvertToTreeSequence \
-  --anc $OUT_DIR/true_$ID.sample${i}.anc --mut $OUT_DIR/true_$ID.sample${i}.mut -o $OUT_DIR/true_$ID.sample${i}
-done
+  --anc $OUT_DIR/true_$ID.sample\${i}.anc --mut $OUT_DIR/true_$ID.sample\${i}.mut -o $OUT_DIR/true_$ID.sample\${i} 
+" >sample_true.sh
+seq ${MCMC_DRAWS} | xargs -t -I % -P ${NUM_THREADS} bash -c 'bash sample_true.sh % &>/dev/null'
