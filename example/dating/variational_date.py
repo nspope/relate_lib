@@ -276,25 +276,25 @@ Ne = 20000.
 
 # relate-inferred tree sequence
 rela_ts = tskit.load(f"{argv[1]}/relate_outputs/chr1.sample1.trees")
-#rela_local = date_relate(
-#    rela_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=False, num_itt=1
-#)
-#rela_prop = date_relate(
-#    rela_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=True, num_itt=1
-#)
-#pickle.dump(rela_local, open(f"{argv[1]}/dated/chr1.dated.local.pickle", "wb"))
-#pickle.dump(rela_prop, open(f"{argv[1]}/dated/chr1.dated.propagated.pickle", "wb"))
+rela_local = date_relate(
+    rela_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=False, num_itt=1
+)
+rela_prop = date_relate(
+    rela_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=True, num_itt=1
+)
+pickle.dump(rela_local, open(f"{argv[1]}/dated/chr1.dated.local.pickle", "wb"))
+pickle.dump(rela_prop, open(f"{argv[1]}/dated/chr1.dated.propagated.pickle", "wb"))
 
 # relatified simulation (propagate mutations according to true edges)
 true_ts = tskit.load(f"{argv[1]}/relate_outputs/true_chr1.sample1.trees")
-#true_local = date_relate(
-#    true_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=False, num_itt=1
-#)
-#true_prop = date_relate(
-#    true_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=True, num_itt=1
-#)
-#pickle.dump(true_local, open(f"{argv[1]}/dated/true_chr1.dated.local.pickle", "wb"))
-#pickle.dump(true_prop, open(f"{argv[1]}/dated/true_chr1.dated.propagated.pickle", "wb"))
+true_local = date_relate(
+    true_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=False, num_itt=1
+)
+true_prop = date_relate(
+    true_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=True, num_itt=1
+)
+pickle.dump(true_local, open(f"{argv[1]}/dated/true_chr1.dated.local.pickle", "wb"))
+pickle.dump(true_prop, open(f"{argv[1]}/dated/true_chr1.dated.propagated.pickle", "wb"))
 
 # compare against tsdate implementation of algo
 true_ts_nometa = true_ts.dump_tables()
@@ -398,6 +398,7 @@ simul_ts = tskit.load(f"{argv[1]}/chr1.trees")
 simul_truth = aggregate_truth(simul_ts)
 pickle.dump(simul_truth, open(f"{argv[1]}/dated/chr1.simul.pickle", "wb"))
 
+#TODO clean this shit up
 blah_blah = aggregate_truth(blah)
 pickle.dump(blah_blah, open(f"{argv[1]}/dated/blah_blah.pickle", "wb"))
 
