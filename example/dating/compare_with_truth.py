@@ -62,9 +62,13 @@ def plot_node_age_by_frequency(list_of_ages, title, xlabel, ylabel, outfile, col
                 total_span[freq] += span
         ax1.scatter(np.arange(num_samples + 1), time_by_freq / total_span, c=colors[i], label=labels[i], s=2)
         ax2.scatter(np.arange(num_samples + 1), logtime_by_freq / total_span, c=colors[i], label=labels[i], s=2)
+        #ax1.scatter(np.arange(num_samples + 1), (time_by_freq / total_span) / fit[:, 0], c=colors[i], label=labels[i], s=2)
+        #ax2.scatter(np.arange(num_samples + 1), (logtime_by_freq / total_span) - fit[:, 1], c=colors[i], label=labels[i], s=2)
 
     ax1.scatter(np.arange(num_samples + 1), fit[:, 0], s=3, c="black", label='theory')
     ax2.scatter(np.arange(num_samples + 1), fit[:, 1], s=3, c="black", label='theory')
+    #ax1.scatter(np.arange(num_samples + 1), fit[:, 0] / fit[:, 0], s=3, c="black", label='theory')
+    #ax2.scatter(np.arange(num_samples + 1), fit[:, 1] / fit[:, 1], s=3, c="black", label='theory')
     ax1.legend(loc='upper left')
     ax1.set_xlabel(f"{xlabel[0]}")
     ax1.set_ylabel(f"{ylabel[0]}")
@@ -106,7 +110,7 @@ plot_node_age_by_frequency(
 )
 
 plot_node_age_by_frequency(
-    [simul_truth['nodes'], true_mcmc_prop['nodes'], blah_blah['nodes']],
+    [simul_truth['nodes'], true_mcmc_prop['nodes'], true_vari_local['nodes']],
     'Average age by frequency\n(true topologies)', 
     ['Number of descendant tips', 'Number of descendant tips'], ['E[age]', 'E[log age]'],
     f"{argv[1]}/fig/node_age_by_freq.true_chr1.local.png", 

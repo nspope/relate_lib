@@ -119,50 +119,146 @@ def coalescent_prior(num_tips, epoch_start, epoch_size):
 import msprime
 import matplotlib.pyplot as plt
 
-ts = msprime.sim_ancestry(
-  samples=100,
-  ploidy=1,
-  recombination_rate=1e-8,
-  population_size=20000,
-  sequence_length=10e6,
-  random_seed=1088,
-)
-ts = msprime.sim_mutations(
-  ts, rate=1.25e-8, random_seed=1024
+#ts = msprime.sim_ancestry(
+#  samples=100,
+#  ploidy=1,
+#  recombination_rate=1e-8,
+#  population_size=20000,
+#  sequence_length=10e6,
+#  random_seed=1088,
+#)
+#ts = msprime.sim_mutations(
+#  ts, rate=1.25e-8, random_seed=1024
+#)
+#
+#time = np.zeros(ts.num_samples + 1)
+#logtime = np.zeros(ts.num_samples + 1)
+#span = np.zeros(ts.num_samples + 1)
+#for tree in ts.trees():
+#    for node in tree.nodes():
+#        k = tree.num_samples(node)
+#        time[k] += ts.nodes_time[node] * tree.span
+#        logtime[k] += np.log(ts.nodes_time[node]) * tree.span
+#        span[k] += tree.span
+#time /= span
+#logtime /= span
+#
+#prior = coalescent_prior(ts.num_samples, np.array([0.]), np.array([20000.]))
+
+#plt.scatter(time[2:], prior[2:,0], s=2)
+#plt.axline((0,0), slope=1, c="black")
+#plt.savefig("prior_check_1.png")
+#plt.clf()
+#
+#plt.scatter(np.arange(2, ts.num_samples+1), prior[2:,0], s=2, c="blue")
+#plt.scatter(np.arange(2, ts.num_samples+1), time[2:], s=2, c="red")
+#plt.savefig("prior_check_2.png")
+#plt.clf()
+#
+#plt.scatter(logtime[2:], prior[2:,1], s=2)
+#plt.axline((0,0), slope=1, c="black")
+#plt.savefig("prior_check_3.png")
+#plt.clf()
+#
+#plt.scatter(np.arange(2, ts.num_samples+1), prior[2:,1], s=2, c="blue")
+#plt.scatter(np.arange(2, ts.num_samples+1), logtime[2:], s=2, c="red")
+#plt.savefig("prior_check_4.png")
+#plt.clf()
+
+
+def simulate_conditional_coalescent(tree, Ne):
+    # initialize
+    index = {n:i for i,n in enumerate(tree.nodes())}
+    node = [n for n in tree.nodes()]
+    n_nodes = len(node)
+    n_lineages = tree.num_samples()
+
+    has_coalesced = np.full(n_nodes, False)
+    for n, i in index.items():
+        if tree.is_leaf(n):
+            has_coalesced[i] = True
+
+    # can do this quicker ...
+    possible_event = np.full(n_nodes, False)
+    for n, i in index.items():
+        possible_event[i] = ~has_coalesced[i]
+        for c in tree.children(n):
+            possible_event[i] &= has_coalesced[index[c]]
+
+    ages = np.zeros(n_nodes)
+
+    while True:
+        can_coalesce = np.where(possible_event)[0]
+        np.random.shuffle(can_coalesce)
+        next_event = can_coalesce[0]
+        #print(n_lineages, has_coalesced, possible_event, can_coalesce, next_event)
+        waiting_time = np.random.exponential(scale=Ne / scipy.special.binom(n_lineages, 2))
+        ages[~has_coalesced] += waiting_time
+
+        n_lineages -= 1
+        if n_lineages == 1: break
+
+        has_coalesced[next_event] = True
+        possible_event[next_event] = False
+
+        n = tree.parent(node[next_event])
+        i = index[n]
+        possible_event[i] = ~has_coalesced[i]
+        for c in tree.children(n):
+            possible_event[i] &= has_coalesced[index[c]]
+
+        #possible_event = np.full(n_nodes, False)
+        #for n, i in index.items():
+        #    possible_event[i] = ~has_coalesced[i]
+        #    for c in tree.children(n):
+        #        possible_event[i] &= has_coalesced[index[c]]
+
+    return {n:ages[i] for n,i in index.items()}
+
+samples = 20
+replicates = 20000
+ts_gen = msprime.sim_ancestry(
+    samples = samples,
+    population_size = 20000.,
+    ploidy = 1,
+    sequence_length = 1,
+    recombination_rate = 0,
+    num_replicates = replicates,
+    random_seed = 2,
 )
 
-time = np.zeros(ts.num_samples + 1)
-logtime = np.zeros(ts.num_samples + 1)
-span = np.zeros(ts.num_samples + 1)
-for tree in ts.trees():
-    for node in tree.nodes():
-        k = tree.num_samples(node)
-        time[k] += ts.nodes_time[node] * tree.span
-        logtime[k] += np.log(ts.nodes_time[node]) * tree.span
-        span[k] += tree.span
-time /= span
-logtime /= span
+true_age_by_freq = np.zeros(samples + 1)
+sim_age_by_freq = np.zeros(samples + 1)
+num_nodes = np.zeros(samples + 1)
+for ts in ts_gen:
+    for tree in ts.trees():
+        sim_age = simulate_conditional_coalescent(tree, 20000.)
+
+        seen = set()
+        node_sample = set()
+        node_shuffle = [n for n in tree.nodes()]
+        np.random.shuffle(node_shuffle)
+        for node in node_shuffle[:1]:
+            num_desc = tree.num_samples(node)
+            if num_desc not in seen:
+                node_sample.add(node)
+                seen.add(num_desc)
+
+        for i, node in enumerate(tree.nodes()):
+            if node in node_sample:
+                num_desc = tree.num_samples(node)
+                true_age_by_freq[num_desc] += tree.time(node)
+                sim_age_by_freq[num_desc] += sim_age[node]
+                num_nodes[num_desc] += 1
+true_age_by_freq /= num_nodes
+sim_age_by_freq /= num_nodes
 
 prior = coalescent_prior(ts.num_samples, np.array([0.]), np.array([20000.]))
 
-plt.scatter(time[2:], prior[2:,0], s=2)
+#plt.scatter(true_age_by_freq, sim_age_by_freq, s=2)
+plt.scatter(prior[:,0], sim_age_by_freq, s=2)
 plt.axline((0,0), slope=1, c="black")
 plt.savefig("prior_check_1.png")
-plt.clf()
-
-plt.scatter(np.arange(2, ts.num_samples+1), prior[2:,0], s=2, c="blue")
-plt.scatter(np.arange(2, ts.num_samples+1), time[2:], s=2, c="red")
-plt.savefig("prior_check_2.png")
-plt.clf()
-
-plt.scatter(logtime[2:], prior[2:,1], s=2)
-plt.axline((0,0), slope=1, c="black")
-plt.savefig("prior_check_3.png")
-plt.clf()
-
-plt.scatter(np.arange(2, ts.num_samples+1), prior[2:,1], s=2, c="blue")
-plt.scatter(np.arange(2, ts.num_samples+1), logtime[2:], s=2, c="red")
-plt.savefig("prior_check_4.png")
 plt.clf()
 
 

@@ -13,6 +13,63 @@ from scipy.special import gammainc, gammaln, betaln, hyp2f1, digamma
 
 # --- lib --- #
 
+def simulate_conditional_coalescent(tree, Ne):
+    # initialize
+    index = {n:i for i,n in enumerate(tree.nodes())}
+    node = [n for n in tree.nodes()]
+    n_nodes = len(node)
+    n_lineages = tree.num_samples()
+
+    has_coalesced = np.full(n_nodes, False)
+    for n, i in index.items():
+        if tree.is_leaf(n):
+            has_coalesced[i] = True
+
+    possible_event = np.full(n_nodes, False)
+    for n, i in index.items():
+        possible_event[i] = ~has_coalesced[i]
+        for c in tree.children(n):
+            possible_event[i] &= has_coalesced[index[c]]
+
+    ages = np.zeros(n_nodes)
+
+    while True:
+        can_coalesce = np.where(possible_event)[0]
+        np.random.shuffle(can_coalesce)
+        next_event = can_coalesce[0]
+        waiting_time = np.random.exponential(scale=Ne / scipy.special.binom(n_lineages, 2))
+        ages[~has_coalesced] += waiting_time
+
+        n_lineages -= 1
+        if n_lineages == 1: break
+
+        has_coalesced[next_event] = True
+        possible_event[next_event] = False
+
+        n = tree.parent(node[next_event])
+        i = index[n]
+        possible_event[i] = ~has_coalesced[i]
+        for c in tree.children(n):
+            possible_event[i] &= has_coalesced[index[c]]
+
+    return {n:ages[i] for n,i in index.items()}
+
+
+def simulated_prior(tree, Ne, reps=100):
+    prior = {n:np.zeros(2) for n in tree.nodes()}
+    for i in range(reps):
+        sim = simulate_conditional_coalescent(tree, Ne)
+        for n, t in sim.items():
+            prior[n] += [t, np.log(t)]
+    for n, s in prior.items():
+        if not tree.is_leaf(n):
+            shape, rate = tsdate.approx.approximate_gamma_kl(*(s / reps))
+            prior[n] = np.array([shape - 1, -rate])
+        else:
+            prior[n] = np.array([-1., 0.])
+    return prior
+
+
 def tilt_moments_by_coalrate(mean, variance, epoch_start, epoch_size):
     """
     Given mean/variance for the distribution of age of a node: project to gamma
@@ -159,16 +216,16 @@ def mutation_moment_matching(a_i, b_i, a_j, b_j, y_ij, mu_ij, leaf):
     return np.array(proj_ij)
 
 
-def date_relate(ts, mu, epoch_start, epoch_size, propagate_mutations=True, num_itt=1):
+def date_relate(ts, mu, epoch_start, epoch_size, propagate_mutations=True, num_itt=1, global_prior=True):
     """
     Variational dating of a Relate tree sequence.
     """
 
     if propagate_mutations: 
         # placed into metadata by relate_lib::Convert
-        metadata = np.frombuffer(ts.tables.edges.metadata, "i4, i4, f4")
+        metadata = np.frombuffer(ts.tables.edges.metadata, "i4, i4, f4, f4")
         edge_meta = [
-            (metadata[e][0], metadata[e][1], int(metadata[e][2])) for e in range(ts.num_edges)
+            (int(metadata[e][2]), metadata[e][3]) for e in range(ts.num_edges)
         ]
     else:
         # mutations occuring within tree span
@@ -177,7 +234,7 @@ def date_relate(ts, mu, epoch_start, epoch_size, propagate_mutations=True, num_i
             if m.edge != tskit.NULL:
                 edge_mutations[m.edge] += 1.0
         edge_meta = [
-            (ts.edges_left[e], ts.edges_right[e], edge_mutations[e]) for e in range(ts.num_edges)
+            (edge_mutations[e], ts.edges_right[e] - ts.edges_left[e]) for e in range(ts.num_edges)
         ]
 
     node_prior = coalescent_prior(ts.num_samples, epoch_start, epoch_size)
@@ -199,39 +256,52 @@ def date_relate(ts, mu, epoch_start, epoch_size, propagate_mutations=True, num_i
         edges = {}
         nodes = {}
     
-        # conditional coalescent prior
-        for node in tree.nodes():
-            nodes[node] = node_prior[tree.num_samples(node)].copy()
+        if global_prior:
+            pr = simulated_prior(tree, epoch_size[0])
+            for node in tree.nodes():
+                nodes[node] = pr[node]
+        else:
+            # conditional coalescent prior
+            for node in tree.nodes():
+                nodes[node] = node_prior[tree.num_samples(node)].copy()
+
+        #print("--- prior1 ---") #DEBUG
+        #for node, post in nodes.items():
+        #    print(f"p{node}", post[0] + 1, -post[1]) #ts.nodes_time[node], (post[0] + 1) / -post[1])
 
         # incorporate leaves (assumes samples are all contemporary)
         for child in range(ts.num_samples):
             parent, edge = tree.parent(child), tree.edge(child)
             if edge != tskit.NULL:
-                left, right, mutations = edge_meta[edge]
-                rootward_message[edge] = [mutations, (left - right) * mu]
+                mutations, span = edge_meta[edge]
+                rootward_message[edge] = [mutations, -span * mu]
                 nodes[parent] += rootward_message[edge]
     
         # expectation propagation, up trees then down again
         for itt in range(num_itt):
             for e in edge_order + edge_order[::-1]:
-                left, right, mutations = edge_meta[e] 
+                mutations, span = edge_meta[e] 
                 parent, child = ts.edges_parent[e], ts.edges_child[e]
                 if child >= ts.num_samples:
-                    edge_likelihood = [mutations, (left - right) * mu]
+                    edge_likelihood = [mutations, -span * mu]
                     parent_cavity = nodes[parent] - rootward_message[e]
                     child_cavity = nodes[child] - leafward_message[e]
                     nodes[parent], nodes[child] = \
                         node_moment_matching(*parent_cavity, *child_cavity, *edge_likelihood)
                     rootward_message[e] = nodes[parent] - parent_cavity
                     leafward_message[e] = nodes[child] - child_cavity
+            ##DEBUG
+            #print("---", itt, "---")
+            #for node, post in nodes.items():
+            #    print(f"n{node}", post[0] + 1, -post[1]) #ts.nodes_time[node], (post[0] + 1) / -post[1])
 
         # mutation age distributions
         for e in edge_order:
-            left, right, mutations = edge_meta[e] 
+            mutations, span = edge_meta[e] 
             parent, child = ts.edges_parent[e], ts.edges_child[e]
             if mutations > 0:
                 is_a_leaf = child < ts.num_samples
-                edge_likelihood = [mutations, (left - right) * mu]
+                edge_likelihood = [mutations, -span * mu]
                 edges[e] = mutation_moment_matching(
                     *(nodes[parent] - rootward_message[e]),
                     *(nodes[child] - leafward_message[e]),
@@ -274,6 +344,29 @@ if not os.path.exists(f"{argv[1]}/dated"):
 
 Ne = 20000.
 
+# this should use propagated edges only, with the original algorithm
+simul_ts = tskit.load(f"{argv[1]}/chr1.trees")
+#import msprime
+#simul_ts = simul_ts.delete_intervals([[[x for x in simul_ts.breakpoints()][1], simul_ts.sequence_length]]).trim()
+#print("mut before", simul_ts.num_mutations)
+#nu_mu = 1e-7
+#simul_ts = msprime.sim_mutations(simul_ts, rate=nu_mu, keep=False)
+#print("mut after", simul_ts.num_mutations)
+rela_local = date_relate(
+    simul_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=False, num_itt=1
+    #simul_ts, nu_mu, np.array([0.]), np.array([Ne]), propagate_mutations=False, num_itt=1
+)
+#print("--- prior2 ---")
+#grid = tsdate.prior.MixturePrior(simul_ts, prior_distribution="gamma").make_parameter_grid(population_size=Ne/2)
+#for node in grid.nonfixed_nodes:
+#    print(f"p{node}", grid[node])
+#print("--- tsdate ---")
+#_, rela_local2 = tsdate.date(simul_ts, population_size=Ne/2., mutation_rate=nu_mu, method='variational_gamma', global_prior=False, max_iterations=1, return_posteriors=True)
+#print(rela_local2)
+#assert False
+pickle.dump(rela_local, open(f"{argv[1]}/dated/chr1.dated.local.pickle", "wb"))
+assert False
+
 # relate-inferred tree sequence
 rela_ts = tskit.load(f"{argv[1]}/relate_outputs/chr1.sample1.trees")
 rela_local = date_relate(
@@ -282,7 +375,7 @@ rela_local = date_relate(
 rela_prop = date_relate(
     rela_ts, 1.25e-8, np.array([0.]), np.array([Ne]), propagate_mutations=True, num_itt=1
 )
-pickle.dump(rela_local, open(f"{argv[1]}/dated/chr1.dated.local.pickle", "wb"))
+#pickle.dump(rela_local, open(f"{argv[1]}/dated/chr1.dated.local.pickle", "wb"))
 pickle.dump(rela_prop, open(f"{argv[1]}/dated/chr1.dated.propagated.pickle", "wb"))
 
 # relatified simulation (propagate mutations according to true edges)
@@ -295,26 +388,27 @@ true_prop = date_relate(
 )
 pickle.dump(true_local, open(f"{argv[1]}/dated/true_chr1.dated.local.pickle", "wb"))
 pickle.dump(true_prop, open(f"{argv[1]}/dated/true_chr1.dated.propagated.pickle", "wb"))
+assert False
 
-# compare against tsdate implementation of algo
-true_ts_nometa = true_ts.dump_tables()
-true_ts_nometa.edges.packset_metadata([b''] * true_ts_nometa.edges.num_rows)
-#true_ts_nometa.delete_intervals([[[x for x in true_ts.breakpoints()][100], true_ts.sequence_length]])
-#true_ts_nometa.trim()
-true_ts_nometa = true_ts_nometa.tree_sequence()
-prior = coalescent_prior(true_ts_nometa.num_samples, np.array([0.]), np.array([20000.]))
-grid = tsdate.prior.MixturePrior(true_ts_nometa, prior_distribution="gamma").make_parameter_grid(population_size=10000.)
-for tree in true_ts_nometa.trees():
-    for node in tree.nodes():
-        if node >= true_ts_nometa.num_samples:
-            alpha, beta = prior[tree.num_samples(node)]
-            grid[node] = [alpha + 1, -beta]
-blah, baz = tsdate.date(
-    true_ts_nometa, mutation_rate=1.25e-8, 
-    #population_size=1e4, global_prior=True,
-    priors=grid, global_prior=False, 
-    method="variational_gamma", max_iterations=1, return_posteriors=True, progress=True
-)
+## compare against tsdate implementation of algo
+#true_ts_nometa = true_ts.dump_tables()
+#true_ts_nometa.edges.packset_metadata([b''] * true_ts_nometa.edges.num_rows)
+##true_ts_nometa.delete_intervals([[[x for x in true_ts.breakpoints()][100], true_ts.sequence_length]])
+##true_ts_nometa.trim()
+#true_ts_nometa = true_ts_nometa.tree_sequence()
+#prior = coalescent_prior(true_ts_nometa.num_samples, np.array([0.]), np.array([20000.]))
+#grid = tsdate.prior.MixturePrior(true_ts_nometa, prior_distribution="gamma").make_parameter_grid(population_size=10000.)
+#for tree in true_ts_nometa.trees():
+#    for node in tree.nodes():
+#        if node >= true_ts_nometa.num_samples:
+#            alpha, beta = prior[tree.num_samples(node)]
+#            grid[node] = [alpha + 1, -beta]
+#blah, baz = tsdate.date(
+#    true_ts_nometa, mutation_rate=1.25e-8, 
+#    #population_size=1e4, global_prior=True,
+#    priors=grid, global_prior=False, 
+#    method="variational_gamma", max_iterations=1, return_posteriors=True, progress=True
+#)
 
 # compare against FULL tsdate implementation
 simul_ts = tskit.load(f"{argv[1]}/chr1.trees")
